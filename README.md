@@ -32,6 +32,23 @@ $ bundle install --path vendor/bundle
 $ bundle exec rake onepunchman:check
 ```
 
+### How to Deploy to Heroku
+
+```sh
+$ heroku create
+$ heroku push heroku master
+$ heroku config:set TRELLO_CONSUMER_KEY=YOUR_TRELLO_CONSUMER_KEY
+$ heroku config:set TRELLO_CONSUMER_SECRET=YOUR_TRELLO_CONSUMER_SECRET
+$ heroku config:set TRELLO_OAUTH_TOKEN=YOUR_TRELLO_OAUTH_TOKEN
+$ heroku config:set TRELLO_BOARD_NAME=YOUR_TRELLO_BOARD_NAME
+$ heroku config:set TRELLO_LIST_NAME=YOUR_TRELLO_LIST_NAME
+# test
+$ heroku run rake onepunchman:check
+# configure scheduler
+$ heroku addons:create scheduler:standard
+$ heroku addons:open scheduler
+```
+
 ## Licence
 
 [MIT](https://github.com/tcnksm/tool/blob/master/LICENCE)
