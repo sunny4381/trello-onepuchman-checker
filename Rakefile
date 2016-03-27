@@ -2,6 +2,7 @@ require 'dotenv'
 require 'faraday'
 require 'logger'
 require 'trello'
+require 'uri'
 
 namespace :onepunchman do
   def logger
@@ -16,18 +17,41 @@ namespace :onepunchman do
     end
   end
 
-  def exists_topic?(topic)
-    response = conn.get("/%{topic}.html" % { topic: topic })
-    response.status == 200
-  end
-
   def find_latest_topic
-    latest_topic = nil
-    100.upto(200).each do |topic|
-      break unless exists_topic?(topic)
-      latest_topic = topic
+    response = conn.get
+    return nil if response.status != 200
+
+    # convert encoding
+    body = response.body.dup
+    body.force_encoding('Shift_JIS')
+    body.encode!('UTF-8')
+
+    # extract topic links
+    links = body.scan(/<a href=".+?">.+?<\/a>/).map do |link|
+      link =~ /<a href="(.+?)">(.+?)<\/a>/
+      { href: $1, text: $2 }
     end
-    latest_topic
+    links.each do |link|
+      link[:href] = "http://galaxyheavyblow.web.fc2.com/#{link[:href]}" if !link[:href].start_with?('http')
+    end
+    links.each do |link|
+      link[:text] = link[:text].tr('０-９', '0-9')
+    end
+    links.each do |link|
+      if /^第(\d+(\.\d+)?)話$/ =~ link[:text]
+        topic = $1.to_f
+        topic = topic.to_i if topic == topic.to_i
+        link[:topic] = topic
+      else
+        link[:topic] = nil
+      end
+    end
+    links.reject! do |link|
+      link[:topic].nil?
+    end
+
+    # find latest topic link
+    links.max_by { |link| link[:topic] }
   end
 
   def configure_trello
@@ -69,12 +93,20 @@ namespace :onepunchman do
     end
     return nil unless comment
 
-    topic = comment.data['text'].to_i
-    return nil if topic == 0
+    topic = begin
+      JSON.parse(comment.data['text']).symbolize_keys
+    rescue JSON::ParserError
+      topic = comment.data['text'].to_i
+      {
+        href: "http://galaxyheavyblow.web.fc2.com/#{topic}",
+        text: "第#{topic}話",
+        topic: topic
+      }.symbolize_keys
+    end
     topic
   end
 
-  def write_latest_topic(topic)
+  def write_latest_topic(link)
     list = trello_list
     card = list.cards.find do |card|
       card.name == '.topic'
@@ -93,19 +125,18 @@ namespace :onepunchman do
 
     if comment
       # there is no convenient method to update comment
-      list.client.put("/cards/#{card.id}/actions/#{comment.id}/comments", text: topic.to_s)
+      list.client.put("/cards/#{card.id}/actions/#{comment.id}/comments", text: link.to_json)
     else
-      card.add_comment(topic.to_s)
+      card.add_comment(link.to_json)
     end
   end
 
-  def send_update_info(topic)
-    url = "http://galaxyheavyblow.web.fc2.com/%{topic}.html" % { topic: topic }
+  def send_update_info(link)
     list = trello_list
     card = Trello::Card.create(
-      name: "ワンパンマン 第#{topic}話",
+      name: "ワンパンマン 第#{link[:topic]}話",
       list_id: list.id,
-      desc: "新しい話題 第#{topic}話があります。\n#{url}",
+      desc: "新しい話題 第#{link[:topic]}話があります。\n#{link[:href]}",
       pos: 'bottom')
   end
 
@@ -126,34 +157,17 @@ namespace :onepunchman do
   desc '新しい話数が投稿されたか調べる'
   task(check: [:dotenv, :configure_trello, :init]) do
     topic = read_latest_topic
+    latest_topic = find_latest_topic
 
-    if exists_topic?(topic + 1)
-      send_update_info(topic + 1)
-      write_latest_topic(topic + 1)
+    if topic[:topic] < latest_topic[:topic]
+      send_update_info(latest_topic)
+      write_latest_topic(latest_topic)
     end
   end
 
-  task(test: [:dotenv, :configure_trello]) do
-    list = trello_list
-    puts "#{list.board.name} - #{list.name}"
-    card = list.cards.find do |card|
-      card.name == '.topic'
-    end
-    unless card
-      card = Trello::Card.create(
-        name: '.topic',
-        list_id: list.id,
-        desc: 'このカードは消さないでください。',
-        pos: 'top')
-    end
-
-    comment = card.actions.find do |action|
-      action.type == 'commentCard'
-    end
-
-    puts comment.data['text']
-    list.client.put("/cards/#{card.id}/actions/#{comment.id}/comments", text: '103')
-  end
+  # task(test: [:dotenv, :configure_trello]) do
+  #   puts read_latest_topic
+  # end
 end
 
 # task(default: 'onepunchman:check')
